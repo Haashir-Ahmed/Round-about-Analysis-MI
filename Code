@@ -2,15 +2,19 @@ import geopandas as gpd
 import pandas as pd
 from shapely.geometry import Point
 from shapely import wkt
+
+# LOAD OSM INTERSECTIONS CSV
+osm_traffic = pd.read_csv(r"OSM DATA")
+
 # LOAD NHGIS + MERGE
 df_table = pd.read_csv(
-    r"C:nhgis0004_ds267_20235_tract.csv",
+    r"NHGIS CVS DATA",
     low_memory=False
 )
 df_table['ASQPE001'] = df_table['ASQPE001'].where(df_table['ASQPE001'] >= 0, 0)
 
 gis_shap = gpd.read_file(
-    r"C: nhgis0004_shapefile_tl2023_us_tract_2023.zip"
+    r"NGHIS ZIP FILE"
 )
 gis_mi = gis_shap.merge(df_table, on='GISJOIN')
 gis_mi = gis_mi[gis_mi['STATE'] == 'Michigan'].copy()
@@ -26,7 +30,7 @@ del gis_shap, df_table
 
 # LOAD SEMCOG CRASH DATA
 semcog = pd.read_csv(
-    r"C:crash2024_10year_-2940358597150127354.csv",
+    r"10 year crash file from SEMCOG",
     low_memory=False
 )
 semcog = semcog[semcog['YEAR'].isin([2019, 2020, 2021, 2022, 2023])]
@@ -242,9 +246,6 @@ desired_cols = [
 final_results = final_results[[c for c in desired_cols if c in final_results.columns]]
 
 # SIMILAR INTERSECTIONS USING OSM
-# LOAD OSM INTERSECTIONS CSV
-osm_traffic = pd.read_csv(r"C: test_output.csv")
-
 # Convert WKT → geometry
 osm_traffic['geometry'] = osm_traffic['geometry_wkt'].apply(wkt.loads)
 osm_traffic = gpd.GeoDataFrame(osm_traffic, geometry='geometry', crs="EPSG:4326")
