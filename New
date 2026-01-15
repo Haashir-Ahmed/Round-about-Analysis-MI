@@ -1,15 +1,12 @@
-# ============================================================================
 # IMPORTS & SETTINGS
-# ============================================================================
 import geopandas as gpd
 import pandas as pd
 from shapely.geometry import Point
 from shapely import wkt
 gpd.options.use_pygeos = True
 
-# ============================================================================
+   
 # PART 1: LOAD NHGIS CENSUS DATA
-# ============================================================================
 df_table = pd.read_csv(
     r"C:\Users\haash\Downloads\12\nhgis0004_csv\nhgis0004_csv\nhgis0004_ds267_20235_tract.csv",
     low_memory=False
@@ -29,12 +26,8 @@ NHGIS_RENAME = {
     'ASQNE002': 'Below_Poverty_Level',
     'ASQNE003': 'At_or_Above_Poverty_Level'
 }
-gis_mi = gis_mi.rename(columns=NHGIS_RENAME)
-gis_mi = gis_mi[gis_mi['Median_HH_Income'] > 0]
-
-# ============================================================================
+gis_mi = gis_mi.rename(columns=NHGIS_RENAME)   
 # PART 2: LOAD SEMCOG CRASH DATA
-# ============================================================================
 semcog = pd.read_csv(
     r"C:\Users\haash\Downloads\crash2024_10year_-2940358597150127354.csv",
     low_memory=False
@@ -61,13 +54,7 @@ semcog_gdf = gpd.sjoin(
     predicate="within"
 ).drop(columns=['index_right'], errors='ignore')
 
-for c in ['MAINROAD', 'INTERROAD']:
-    if c in semcog_gdf.columns:
-        semcog_gdf[c] = semcog_gdf[c].str.strip().str.lower()
-
-# ============================================================================
-# PART 3: ROUNDABOUT LOCATIONS
-# ============================================================================
+# PART 3: ROUNDABOUT LOCATIONS  
 roundabouts = pd.DataFrame([
     {"Roundabout": "Hartland Rd. / Rovey Dr.", "County": "Livingston", "Approaches": 4, "lat": 42.63682, "lon": -83.74883},
     {"Roundabout": "Tienken Rd. / Runyon Rd. / Washington Rd.", "County": "Oakland", "Approaches": 4, "lat": 42.69743, "lon": -83.11135},
@@ -178,12 +165,10 @@ roundabouts_gdf = gpd.GeoDataFrame(
     crs="EPSG:4326"
 ).to_crs(semcog_gdf.crs)
 
-roundabouts_gdf['buffer_geom'] = roundabouts_gdf.geometry.buffer(50)
+roundabouts_gdf['buffer_geom'] = roundabouts_gdf.geometry.buffer(75)
 
-# ============================================================================
+   
 # PART 4: CRASH RATE HELPERS
-# ============================================================================
-
 FACTOR_COLS = [
     'PEDESTRIAN','BICYCLE','MOTORCYCLE','ALCOHOL','DRUG','DISTRACTED',
     'HITNRUN','COMMERCIAL','DEER','SCHOOLBUS','WORK_ZONE'
@@ -195,18 +180,14 @@ EXTRA_RATE_COLS = [
 ]
 
 CRASH_COUNT_COLS = ['KCOUNT','ACOUNT','BCOUNT','CCOUNT'] + FACTOR_COLS + EXTRA_RATE_COLS
-
-
 def compute_exposure_mev(df, years=5):
     return (df['AADTR'].quantile(0.75) * 365 * years) / 1_000_000
-
 
 def compute_rates(df, exposure):
     rates = {
         'rate_TOTAL_CRASHES': len(df) / exposure
     }
 
-    # Standard counts + factors
     for c in CRASH_COUNT_COLS:
         if c in df.columns:
             rates[f'rate_{c}'] = df[c].sum() / exposure
@@ -216,7 +197,6 @@ def compute_rates(df, exposure):
     no_factor_count = (df[existing_factors].sum(axis=1) == 0).sum()
     rates['NO_FACTOR_crashes_5yr'] = no_factor_count
     rates['rate_NO_FACTOR'] = no_factor_count / exposure
-
     return rates
 
 def add_poverty(df):
@@ -225,10 +205,9 @@ def add_poverty(df):
     if 'Pct_At_or_Above_Poverty' not in df.columns and 'At_or_Above_Poverty_Level' in df.columns:
         df['Pct_At_or_Above_Poverty'] = df['At_or_Above_Poverty_Level'] / df['Poverty_Total'] * 100
     return df
-# ============================================================================
-# PART 5: ROUNDABOUT ANALYSIS (VECTORIZED)
-# ============================================================================
-round_buffers = roundabouts_gdf[['Roundabout','County','Approaches','buffer_geom']].set_geometry('buffer_geom')
+   
+# PART 5: ROUNDABOUT ANALYSIS
+round_buffers = roundabouts_gdf[['Roundabout','County', 'buffer_geom']].set_geometry('buffer_geom')
 
 rb_crashes = gpd.sjoin(
     semcog_gdf,
@@ -245,7 +224,6 @@ for name, df in rb_crashes.groupby('Roundabout'):
     row = {
         'Roundabout': name,
         'County': df['County'].iloc[0],
-        'Approaches': df['Approaches'].iloc[0],
         'Total_Crashes': len(df),
         'Exposure_5YR_MEV': exposure,
         'AADTR_mean': df['AADTR'].mean(),
@@ -259,93 +237,143 @@ for name, df in rb_crashes.groupby('Roundabout'):
 
 rounda_results = pd.DataFrame(results)
 
-# ============================================================================
-# PART 6: LOAD OSM ROADS
-# ============================================================================
+# PART 6: LOAD OSM ROADS  
 osm = pd.read_csv(r"C:\Users\haash\Downloads\test_output.csv")
 osm['geometry'] = osm['geometry_wkt'].apply(wkt.loads)
 roads = gpd.GeoDataFrame(osm, geometry='geometry', crs="EPSG:4326").to_crs(semcog_gdf.crs)
-
 roads = roads[roads['fclass'].isin([
-    'primary','secondary','tertiary',
-    'motorway_link','primary_link',
-    'secondary_link','tertiary_link',
-    'residential'
+    'motorway','motorway_link','primary','primary_link','secondary','secondary_link',
+    'tertiary','tertiary_link','residential','unclassified','service'
 ])]
 
-# ============================================================================
 # PART 7: INTERSECTION DETECTION
-# ============================================================================
 def classify_intersection(road_classes):
     order = ['motorway_link','primary','secondary','tertiary','residential']
+    top2 = []
     for o in order:
         if o in road_classes:
-            return o
-    return 'other'
-
+            top2.append(o)
+        if len(top2) == 2:
+            break
+    if not top2:
+        top2 = ['other']
+    return top2
+# Simplify geometries to speed up calculations
 roads_simple = roads.copy()
 roads_simple['geometry'] = roads_simple.geometry.simplify(1)
 roads_simple = roads_simple.explode(index_parts=False)
 
+# Collect start/end points of each road segment
 pts = []
 for r in roads_simple.itertuples():
     g = r.geometry
     pts.append({'geometry': Point(g.coords[0]), 'fclass': r.fclass})
     pts.append({'geometry': Point(g.coords[-1]), 'fclass': r.fclass})
 
+# Convert to GeoDataFrame
 pts = gpd.GeoDataFrame(pts, crs=roads.crs)
-pts['x'] = pts.geometry.x.round(1)
-pts['y'] = pts.geometry.y.round(1)
 
+# Coordinates to group nearby points
+pts['x'] = pts.geometry.x
+pts['y'] = pts.geometry.y
+
+# Group points to find intersection classes
+intersection_classes = (
+    pts.groupby(['x','y'])['fclass']
+       .unique()
+       .reset_index()
+)
+
+# Add unique ID for each intersection
+intersection_classes['iid'] = intersection_classes['x'].astype(str) + "_" + intersection_classes['y'].astype(str)
+intersection_classes = intersection_classes[['iid','fclass']]
+
+# Build final intersections GeoDataFrame
 intersections = []
 for (x,y), g in pts.groupby(['x','y']):
     classes = g['fclass'].unique().tolist()
-    n = len(classes)
-    if n < 3 or n > 4:
-        continue
-    if classes == ['residential']:
-        continue
     intersections.append({
-        'geometry': Point(x,y),
-        'num_approaches': n,
+        'iid': f"{x}_{y}",
+        'geometry': Point(x, y),
         'intersection_class': classify_intersection(classes)
     })
 
 quality_intersections = gpd.GeoDataFrame(intersections, crs=roads.crs)
-quality_intersections['buffer_geom'] = quality_intersections.geometry.buffer(50)
+quality_intersections['buffer_geom'] = quality_intersections.geometry.buffer(75)
 
-# ============================================================================
 # PART 8: ROUNDABOUT ROAD CLASS (FAST)
-# ============================================================================
 road_sindex = roads.sindex
-
 def road_classes_at_point(pt):
-    idx = road_sindex.query(pt.buffer(50), predicate='intersects')
+    idx = road_sindex.query(pt.buffer(75), predicate='intersects')
     return roads.iloc[idx]['fclass'].unique().tolist()
 
-roundabouts_gdf['intersection_class'] = roundabouts_gdf.geometry.apply(
-    lambda g: classify_intersection(road_classes_at_point(g))
-)
+rb_classes = []
 
+for rb in roundabouts_gdf.itertuples():
+    for rc in road_classes_at_point(rb.geometry):
+        rb_classes.append({
+            'Roundabout': rb.Roundabout,
+            'fclass': rc
+        })
+rb_classes = pd.DataFrame(rb_classes)
+
+# Compute intersection class for roundabouts
+def roundabout_class(rb_geom):
+    # get all roads within 75 m buffer
+    nearby = roads[roads.geometry.intersects(rb_geom.buffer(75))]
+    road_classes = nearby['fclass'].unique().tolist()
+    return classify_intersection(road_classes)
+
+# Add column to roundabouts_gdf
+roundabouts_gdf['intersection_class'] = roundabouts_gdf.geometry.apply(roundabout_class)
+# Extract top1/top2 from intersection_class
+# First merge to get intersection_class
 rounda_results = rounda_results.merge(
     roundabouts_gdf[['Roundabout','intersection_class']],
     on='Roundabout'
 )
-
-# ============================================================================
+# Then extract top1/top2
+rounda_results['top1'] = rounda_results['intersection_class'].apply(lambda x: x[0] if len(x) > 0 else None)
+rounda_results['top2'] = rounda_results['intersection_class'].apply(lambda x: x[1] if len(x) > 1 else None)
+   
 # PART 9: MATCHED INTERSECTIONS (FAST)
-# ============================================================================
+# Build lookup of road classes per roundabout (do this once)
+# PART 9: MATCHED INTERSECTIONS (FAST)
+# Build lookup of road classes per roundabout (do this once)
+rb_road_classes = {}
+for rb in roundabouts_gdf.itertuples():
+    rb_road_classes[rb.Roundabout] = set(road_classes_at_point(rb.geometry))
+
+# PRE-COMPUTE: Build lookup of road classes per intersection
+intersection_road_classes = {}
+for idx, row in quality_intersections.iterrows():
+    classes = set(road_classes_at_point(row.geometry))
+    intersection_road_classes[idx] = classes
+
 results_similar = []
 
 for rb in rounda_results.itertuples():
+    # Step 1: Match by top 2 road classes (check if ANY of rb's top2 match intersection's top2)
     cands = quality_intersections[
-        (quality_intersections.intersection_class == rb.intersection_class) &
-        (quality_intersections.num_approaches == rb.Approaches)
-    ]
-
+        quality_intersections.intersection_class.apply(
+            lambda x: any(rc in [rb.top1, rb.top2] for rc in x) if len(x) > 0 else False
+        )
+    ].copy()
+    
+    if cands.empty:
+        continue
+    
+    # Step 2: Require at least 1 shared road class (vectorized)
+    rb_classes = rb_road_classes[rb.Roundabout]
+    cands['has_shared_class'] = cands.index.map(
+        lambda idx: bool(rb_classes & intersection_road_classes[idx])
+    )
+    cands = cands[cands.has_shared_class]
+    
     if cands.empty:
         continue
 
+    # Step 3: Spatial join crashes
     cand_crashes = gpd.sjoin(
         semcog_gdf,
         cands[['buffer_geom']].set_geometry('buffer_geom'),
@@ -353,7 +381,7 @@ for rb in rounda_results.itertuples():
     )
 
     for i, (cid, df) in enumerate(cand_crashes.groupby(cand_crashes.index_right)):
-        if i >= 10:
+        if i >= 10:  # Limit to 10 matches per roundabout
             break
 
         aadtr = df['AADTR'].mean()
@@ -364,7 +392,6 @@ for rb in rounda_results.itertuples():
         row = {
             'Matched_Roundabout': rb.Roundabout,
             'Intersection_Class': rb.intersection_class,
-            'Num_Approaches': rb.Approaches,
             'Total_Crashes': len(df),
             'Exposure_5YR_MEV': exposure,
             'AADTR_mean': aadtr,
@@ -377,18 +404,20 @@ for rb in rounda_results.itertuples():
         results_similar.append(row)
 
 similar_results = pd.DataFrame(results_similar)
+inter_results = pd.DataFrame(similar_results)
+inter_results = inter_results[inter_results['Median_HH_Income'].notna() & (inter_results['Median_HH_Income'] > 0)]
+rounda_results = rounda_results[rounda_results['Median_HH_Income'].notna() & (rounda_results['Median_HH_Income'] > 0)]
+inter_results = inter_results[inter_results['AADTR_mean'].notna() & (inter_results['AADTR_mean'] > 0)]
+rounda_results = rounda_results[rounda_results['AADTR_mean'].notna() & (rounda_results['AADTR_mean'] > 0)]  
 
-# ============================================================================
 # PART 10: SAVE OUTPUTS
-# ============================================================================
 output_dir = r"C:\Users\haash\Downloads"
-
 rounda_results.to_csv(
     fr"{output_dir}\Roundabouts.csv",
     index=False
 )
 
-similar_results.to_csv(
+inter_results.to_csv(
     fr"{output_dir}\SimilarIntersections.csv",
     index=False
 )
