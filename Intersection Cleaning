@@ -1,61 +1,40 @@
 import pandas as pd
 import geopandas as gpd
-from shapely.geometry import Point
-
 # Load results
-rounda_results = pd.read_csv(r"C:\Users\haash\Downloads\Roundabouts1.csv")
 inter_results = pd.read_csv(r"C:\Users\haash\Downloads\SimilarIntersections1.csv")
 
 # Convert to GeoDataFrames
-rounda_gdf = gpd.GeoDataFrame(
-    rounda_results,
-    geometry=gpd.points_from_xy(rounda_results.lon, rounda_results.lat),
-    crs="EPSG:4326"
-).to_crs("EPSG:32617")
-
 inter_gdf = gpd.GeoDataFrame(
     inter_results,
     geometry=gpd.points_from_xy(inter_results.lon, inter_results.lat),
     crs="EPSG:4326"
 ).to_crs("EPSG:32617")
 
-# Find roundabouts within 150m of each other
-close_roundabouts = []
-for i, row1 in rounda_gdf.iterrows():
-    for j, row2 in rounda_gdf.iterrows():
-        if i < j:  # Avoid duplicates
-            dist = row1.geometry.distance(row2.geometry)
-            if dist <= 150:
-                close_roundabouts.append({
-                    'Roundabout_1': row1['Roundabout'],
-                    'Roundabout_2': row2['Roundabout'],
-                    'Distance_m': round(dist, 2),
-                    'AADTR_1': row1['AADTR_mean'],
-                    'AADTR_2': row2['AADTR_mean']
-                })
 
-if close_roundabouts:
-    close_df = pd.DataFrame(close_roundabouts)
-else:
-    print("\nNo roundabouts found within 150m of each other.")
+# Find intersections within 150m and keep only highest AADTR (FAST VERSION)
+inter_gdf = inter_gdf.sort_values('AADTR_mean', ascending=False).reset_index(drop=True)
 
-# Find intersections within 150m and keep only highest AADTR
-to_remove = set()
-for i, row1 in inter_gdf.iterrows():
-    if i in to_remove:
+keep_mask = [True] * len(inter_gdf)
+sindex = inter_gdf.sindex
+
+for i in range(len(inter_gdf)):
+    if not keep_mask[i]:
         continue
-    for j, row2 in inter_gdf.iterrows():
-        if i < j and j not in to_remove:
-            dist = row1.geometry.distance(row2.geometry)
+    
+    # Find candidates within 150m using spatial index
+    buffer = inter_gdf.loc[i, 'geometry'].buffer(150)
+    possible_matches = list(sindex.intersection(buffer.bounds))
+    
+    # Check actual distances for candidates
+    for j in possible_matches:
+        if j > i and keep_mask[j]:  # Only check later rows (higher index = lower AADTR due to sort)
+            dist = inter_gdf.loc[i, 'geometry'].distance(inter_gdf.loc[j, 'geometry'])
             if dist <= 150:
-                # Keep the one with higher AADTR, remove the other
-                if row1['AADTR_mean'] >= row2['AADTR_mean']:
-                    to_remove.add(j)
-                else:
-                    to_remove.add(i)
-                    break
-# Clean the dataframe
-inter_cleaned = inter_gdf[~inter_gdf.index.isin(to_remove)].copy()
+                keep_mask[j] = False  # Remove lower AADTR intersection
+
+# Keep only the selected intersections
+inter_cleaned = inter_gdf[keep_mask].copy()
+
 
 # Convert back to lat/lon for saving
 inter_cleaned = inter_cleaned.to_crs("EPSG:4326")
@@ -70,3 +49,5 @@ inter_cleaned_df.to_csv(
     f"{output_dir}\\SimilarIntersections_Cleaned.csv",
     index=False
 )
+
+print(f"\nCleaned results saved to: {output_dir}\\SimilarIntersections_Cleaned.csv")
