@@ -1,0 +1,72 @@
+import pandas as pd
+import geopandas as gpd
+from shapely.geometry import Point
+
+# Load results
+rounda_results = pd.read_csv(r"C:\Users\haash\Downloads\Roundabouts1.csv")
+inter_results = pd.read_csv(r"C:\Users\haash\Downloads\SimilarIntersections1.csv")
+
+# Convert to GeoDataFrames
+rounda_gdf = gpd.GeoDataFrame(
+    rounda_results,
+    geometry=gpd.points_from_xy(rounda_results.lon, rounda_results.lat),
+    crs="EPSG:4326"
+).to_crs("EPSG:32617")
+
+inter_gdf = gpd.GeoDataFrame(
+    inter_results,
+    geometry=gpd.points_from_xy(inter_results.lon, inter_results.lat),
+    crs="EPSG:4326"
+).to_crs("EPSG:32617")
+
+# Find roundabouts within 150m of each other
+close_roundabouts = []
+for i, row1 in rounda_gdf.iterrows():
+    for j, row2 in rounda_gdf.iterrows():
+        if i < j:  # Avoid duplicates
+            dist = row1.geometry.distance(row2.geometry)
+            if dist <= 150:
+                close_roundabouts.append({
+                    'Roundabout_1': row1['Roundabout'],
+                    'Roundabout_2': row2['Roundabout'],
+                    'Distance_m': round(dist, 2),
+                    'AADTR_1': row1['AADTR_mean'],
+                    'AADTR_2': row2['AADTR_mean']
+                })
+
+if close_roundabouts:
+    close_df = pd.DataFrame(close_roundabouts)
+else:
+    print("\nNo roundabouts found within 150m of each other.")
+
+# Find intersections within 150m and keep only highest AADTR
+to_remove = set()
+for i, row1 in inter_gdf.iterrows():
+    if i in to_remove:
+        continue
+    for j, row2 in inter_gdf.iterrows():
+        if i < j and j not in to_remove:
+            dist = row1.geometry.distance(row2.geometry)
+            if dist <= 150:
+                # Keep the one with higher AADTR, remove the other
+                if row1['AADTR_mean'] >= row2['AADTR_mean']:
+                    to_remove.add(j)
+                else:
+                    to_remove.add(i)
+                    break
+# Clean the dataframe
+inter_cleaned = inter_gdf[~inter_gdf.index.isin(to_remove)].copy()
+
+# Convert back to lat/lon for saving
+inter_cleaned = inter_cleaned.to_crs("EPSG:4326")
+inter_cleaned['lat'] = inter_cleaned.geometry.y
+inter_cleaned['lon'] = inter_cleaned.geometry.x
+
+# Drop geometry column and save
+inter_cleaned_df = pd.DataFrame(inter_cleaned.drop(columns='geometry'))
+
+output_dir = r"C:\Users\haash\Downloads"
+inter_cleaned_df.to_csv(
+    f"{output_dir}\\SimilarIntersections_Cleaned.csv",
+    index=False
+)
