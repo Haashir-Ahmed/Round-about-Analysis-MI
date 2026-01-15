@@ -1,0 +1,62 @@
+import pandas as pd
+import geopandas as gpd
+
+# Load roundabout results
+rounda_results = pd.read_csv(r"C:\Users\haash\Downloads\Roundabouts1.csv")
+
+# Convert to GeoDataFrame
+rounda_gdf = gpd.GeoDataFrame(
+    rounda_results,
+    geometry=gpd.points_from_xy(rounda_results.lon, rounda_results.lat),
+    crs="EPSG:4326"
+).to_crs("EPSG:32617")
+
+# Find roundabout pairs within 150m and keep only higher AADTR
+to_remove = set()
+removed_details = []
+
+for i, row1 in rounda_gdf.iterrows():
+    if i in to_remove:
+        continue
+    for j, row2 in rounda_gdf.iterrows():
+        if i < j and j not in to_remove:
+            dist = row1.geometry.distance(row2.geometry)
+            if dist <= 150:
+                # Keep the one with higher AADTR, remove the other
+                if row1['AADTR_mean'] >= row2['AADTR_mean']:
+                    to_remove.add(j)
+                    removed_details.append({
+                        'Removed_Roundabout': row2['Roundabout'],
+                        'Removed_AADTR': row2['AADTR_mean'],
+                        'Kept_Roundabout': row1['Roundabout'],
+                        'Kept_AADTR': row1['AADTR_mean'],
+                        'Distance_m': round(dist, 2)
+                    })
+                else:
+                    to_remove.add(i)
+                    removed_details.append({
+                        'Removed_Roundabout': row1['Roundabout'],
+                        'Removed_AADTR': row1['AADTR_mean'],
+                        'Kept_Roundabout': row2['Roundabout'],
+                        'Kept_AADTR': row2['AADTR_mean'],
+                        'Distance_m': round(dist, 2)
+                    })
+                    break
+if removed_details:
+    removed_df = pd.DataFrame(removed_details)
+# Clean the dataframe
+rounda_cleaned = rounda_gdf[~rounda_gdf.index.isin(to_remove)].copy()
+
+# Convert back to lat/lon for saving
+rounda_cleaned = rounda_cleaned.to_crs("EPSG:4326")
+rounda_cleaned['lat'] = rounda_cleaned.geometry.y
+rounda_cleaned['lon'] = rounda_cleaned.geometry.x
+
+# Drop geometry column and save
+rounda_cleaned_df = pd.DataFrame(rounda_cleaned.drop(columns='geometry'))
+
+output_dir = r"C:\Users\haash\Downloads"
+rounda_cleaned_df.to_csv(
+    f"{output_dir}\\Roundabouts_Cleaned.csv",
+    index=False
+)
