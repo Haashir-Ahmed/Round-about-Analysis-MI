@@ -39,16 +39,11 @@ df_all['Income_Group'] = df_all['Median_HH_Income'].apply(classify_income)
 target_factors = [
     #'rate_NO_FACTOR',
     'rate_DISTRACTED',
-    'rate_TOTAL_INJURY',
     'rate_DRUG',
     'rate_ALCOHOL',
     'rate_SPEEDING',
     'rate_HITNRUN',
-    'rate_TOTAL_CRASHES',
-    'rate_NO_FACTOR',
-    'rate_BICYCLE',
-    'rate_KCOUNT', 
-    'rate_ACOUNT'
+    'rate_NO_FACTOR'
 ]
 
 print(f"Generating plots for {len(target_factors)} specific safety factors...\n")
